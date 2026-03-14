@@ -5,7 +5,7 @@
 
  Implements localStorage state keys, UI badge "AKT" and one-time OTP generation per spec.
 */
-
+"engines"
 (function(){
   // Utility: normalize email and tipo
   function normEmail(email){
@@ -251,7 +251,7 @@
       console.error('generate OTP click handler failed', e);
     }
   }
-
+"engines"
   // Refresh UI for the current authenticated user (or provided email) to reflect armed/used state at load or when commands arrive
   function _refreshGenerateOtpButtonForEmail(email){
     try{
