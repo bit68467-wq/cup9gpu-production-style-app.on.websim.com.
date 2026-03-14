@@ -12,4 +12,4 @@
     "nodemailer": "^6.9.3"
   }
 }
-"type": "module" 
+"type" : "module" 
