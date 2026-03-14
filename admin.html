@@ -1,0 +1,126 @@
+<<<<<<< SEARCH
+  async function applyOtpForEmail(email, tipo, enabled){
+    try{
+      if(!email || !email.includes('@')) { alert('Inserisci email valida'); return; }
+      const normInput = normalizeEmailField(email);
+      const tipoKey = (tipo === 'deposito' || tipo === 'prelievo') ? tipo : 'all';
+
+      // Try to apply server-side first so the change is global when a real backend is configured.
+      if(typeof window !== 'undefined' && window.CUP9_API_BASE){
+        try{
+          const API_BASE = String(window.CUP9_API_BASE).replace(/\/+$/,'');
+          const url = API_BASE + '/admin/otp';
+          const headers = { 'Content-Type':'application/json' };
+          try{ if(window.auth && typeof auth.currentToken === 'function'){ const tok = auth.currentToken(); if(tok) headers['Authorization'] = 'Bearer ' + tok; } }catch(e){}
+          const resp = await fetch(url, { method:'POST', headers, body: JSON.stringify({ email: normInput, tipo: tipoKey, enabled: !!enabled }) }).catch(()=>null);
+          if(resp && resp.ok){
+            try{ if(typeof notify === 'function') notify('ui:force-refresh'); }catch(e){}
+            alert(`Comando OTP inviato al backend per ${normInput} (${tipoKey}) — successo`); 
+            return;
+          }
+          // if backend failed, fall through to local fallback
+        }catch(err){
+          console.warn('applyOtpForEmail backend attempt failed', err);
+        }
+      }
+
+      // Local fallback: gather candidate emails to apply to (primary, local users, mock users, transactions, owned GPUs)
+      const toApply = new Set([normInput]);
+      try{
+        const usersLocal = JSON.parse(localStorage.getItem('CUP9_USERS') || '[]') || [];
+        usersLocal.forEach(u => { try{ if(u && u.email) toApply.add(String(u.email).toLowerCase()); }catch(e){} });
+      }catch(e){}
+      try{
+        if(window.api && api && api.__internal__ && api.__internal__.db && api.__internal__.db.users){
+          Object.values(api.__internal__.db.users || {}).forEach(mu => { try{ if(mu && mu.email) toApply.add(String(mu.email).toLowerCase()); }catch(e){} });
+        }
+      }catch(e){}
+      try{
+        const txs = JSON.parse(localStorage.getItem('CUP9_TRANSACTIONS') || '[]') || [];
+        txs.forEach(t => { try{
+          const em = String(t.email || '').toLowerCase();
+          if(em) toApply.add(em);
+          if(t.meta && t.meta.ownerEmail) toApply.add(String(t.meta.ownerEmail).toLowerCase());
+        }catch(e){}});
+      }catch(e){}
+      try{
+        const owned = JSON.parse(localStorage.getItem('CUP9_OWNED_GPUS') || '[]') || [];
+        owned.forEach(g => { try{ if(g && g.meta && g.meta.ownerEmail) toApply.add(String(g.meta.ownerEmail).toLowerCase()); }catch(e){} });
+      }catch(e){}
+
+      // Apply per-email keys and persistent operator markers
+      for(const norm of Array.from(toApply)){
+        try{
+          if(tipoKey === 'all' || tipoKey === 'deposito'){
+            try{ localStorage.setItem(`otp_${norm}_deposito`, enabled ? 'armed' : 'false'); }catch(e){}
+            try{ localStorage.setItem(`CUP9_OTP_BUTTON_ENABLED_FOR_${norm}_deposito`, enabled ? 'true' : 'false'); }catch(e){}
+          }
+          if(tipoKey === 'all' || tipoKey === 'prelievo'){
+            try{ localStorage.setItem(`otp_${norm}_prelievo`, enabled ? 'armed' : 'false'); }catch(e){}
+            try{ localStorage.setItem(`CUP9_OTP_BUTTON_ENABLED_FOR_${norm}_prelievo`, enabled ? 'true' : 'false'); }catch(e){}
+          }
+          try{
+            const key = `CUP9_OTP_BUTTON_ENABLED_FOR_${norm}`;
+            const perm = `CUP9_OTP_BUTTON_PERM_DISABLED_FOR_${norm}`;
+            if(enabled){
+              localStorage.setItem(key, 'true');
+              localStorage.removeItem(perm);
+            } else {
+              localStorage.setItem(key, 'false');
+              localStorage.setItem(perm, '1');
+            }
+          }catch(e){}
+          // mirror into mock DB otpStore for visibility in WebSIM
+          try{
+            if(window.api && api && api.__internal__ && api.__internal__.db){
+              api.__internal__.db.otpStore = api.__internal__.db.otpStore || {};
+              if(tipoKey === 'all' || tipoKey === 'deposito') api.__internal__.db.otpStore[`otp_${norm}_deposito`] = enabled ? 'armed' : 'false';
+              if(tipoKey === 'all' || tipoKey === 'prelievo') api.__internal__.db.otpStore[`otp_${norm}_prelievo`] = enabled ? 'armed' : 'false';
+            }
+          }catch(e){}
+        }catch(e){
+          console.warn('apply keys for email failed', norm, e);
+        }
+      }
+
+      // Ensure primary user exists locally for UI coherence
+      try{
+        const usersRaw = localStorage.getItem('CUP9_USERS') || '[]';
+        let users = [];
+        try{ users = JSON.parse(usersRaw) || []; }catch(e){ users = []; }
+        if(!users.find(u => String(u.email || '').toLowerCase() === normInput)){
+          const nowIso = new Date().toISOString();
+          const newUser = { id: 'u_' + Math.random().toString(36).slice(2,8), email: normInput, role: 'user', balance: 0, created_at: nowIso };
+          users.push(newUser);
+          try{ localStorage.setItem('CUP9_USERS', JSON.stringify(users)); }catch(e){}
+          try{ if(window.api && api && api.__internal__ && api.__internal__.db) api.__internal__.db.users[newUser.id] = { id:newUser.id, email:newUser.email, role:newUser.role, created_at:newUser.created_at, balance:newUser.balance }; }catch(e){}
+        }
+      }catch(e){ console.warn('ensure primary user existence failed', e); }
+
+      // Broadcast update and finish
+      try{ localStorage.setItem('CUP9_OTP_BUTTON_ENABLED_FOR_UPDATED', JSON.stringify({ email: normInput, enabled, ts: Date.now() })); }catch(e){}
+      try{ if(typeof notify === 'function') notify('ui:force-refresh'); }catch(e){}
+      alert((enabled ? 'Abilitato' : 'Disabilitato') + ' OTP per ' + email + ' (' + tipo + ')');
+    }catch(e){
+      console.error('applyOtpForEmail failed', e);
+      alert('Errore applicazione modifica OTP');
+    }
+  }
+=======
+  async function applyOtpForEmail(email, tipo, enabled){
+    try{
+      if(!email || !email.includes('@')) { alert('Inserisci email valida'); return; }
+      const normInput = normalizeEmailField(email);
+      const tipoKey = (tipo === 'deposito' || tipo === 'prelievo') ? tipo : 'all';
+
+      // If a real backend is configured, attempt a global admin API call to apply the OTP setting server-side.
+      // This ensures the admin command takes effect for users anywhere in the world (best-effort).
+      if(typeof window !== 'undefined' && window.CUP9_API_BASE){
+        try{
+          const API_BASE = String(window.CUP9_API_BASE).replace(/\/+$/,'');
+          const url = API_BASE + '/admin/otp';
+          const body = { email: normInput, tipo: tipoKey, enabled: !!enabled };
+          const headers = { 'Content-Type':'application/json' };
+          // include auth token if available for protected admin endpoint
+          try{ if(window.auth && typeof auth.currentToken === 'function'){ const tok = auth.currentToken(); if(tok) headers['Authorization'] = 'Bearer ' + tok; } }catch(e){}
+          const
